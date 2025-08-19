@@ -1,0 +1,236 @@
+services:
+
+  # قواعد البيانات
+  patientsdb:
+    container_name: patientsdb_mysql
+    image: mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: patientsdb
+    volumes:
+      - patients_data:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot" ]
+      timeout: 10s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+    networks:
+      - hospital-network
+
+  doctorsdb:
+    container_name: doctorsdb_mysql
+    image: mysql
+    ports:
+      - "3308:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: doctorsdb
+    volumes:
+      - doctors_data:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot" ]
+      timeout: 10s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+    networks:
+      - hospital-network
+
+  appointmentsdb:
+    container_name: appointmentsdb_mysql
+    image: mysql
+    ports:
+      - "3309:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: appointmentsdb
+    volumes:
+      - appointments_data:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot" ]
+      timeout: 10s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+    networks:
+      - hospital-network
+
+  # Config Server
+  configserver:
+    container_name: configserver-ms
+    image: hospital/configserver:configserver_image
+    ports:
+      - "8071:8071"
+    healthcheck:
+      test: "curl --fail --silent http://localhost:8071/actuator/health/readiness | grep UP || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - hospital-network
+
+  # Eureka Server
+  eurekaserver:
+    container_name: eurekaserver-ms
+    image: hospital/eurekaserver:eurekaserver_image
+    ports:
+      - "8761:8761"
+    environment:
+      SPRING_APPLICATION_NAME: eurekaserver
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      EUREKA_CLIENT_FETCH_REGISTRY: false
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: false
+    depends_on:
+      configserver:
+        condition: service_healthy
+    healthcheck:
+      test: "curl --fail --silent http://localhost:8761/actuator/health/readiness | grep UP || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - hospital-network
+
+  # Patient Service
+  patient:
+    container_name: patient-ms
+    image: hospital/patient:patients_image
+    ports:
+      - "9191:9191"
+    environment:
+      SPRING_APPLICATION_NAME: patient
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      SPRING_DATASOURCE_URL: jdbc:mysql://patientsdb:3306/patientsdb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      EUREKA_CLIENT_FETCH_REGISTRY: true
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: true
+    depends_on:
+      patientsdb:
+        condition: service_healthy
+      configserver:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9191/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - hospital-network
+
+  # Doctor Service
+  doctor:
+    container_name: doctor-ms
+    image: hospital/doctor:doctors_image
+    ports:
+      - "9292:9292"
+    environment:
+      SPRING_APPLICATION_NAME: doctor
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      SPRING_DATASOURCE_URL: jdbc:mysql://doctorsdb:3306/doctorsdb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      EUREKA_CLIENT_FETCH_REGISTRY: true
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: true
+    depends_on:
+      doctorsdb:
+        condition: service_healthy
+      configserver:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9292/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - hospital-network
+
+  # Appointment Service
+  appointment:
+    container_name: appointment-ms
+    image: hospital/appointment:appointments_image
+    ports:
+      - "9393:9393"
+    environment:
+      SPRING_APPLICATION_NAME: appointment
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      SPRING_DATASOURCE_URL: jdbc:mysql://appointmentsdb:3306/appointmentsdb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      EUREKA_CLIENT_FETCH_REGISTRY: true
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: true
+    depends_on:
+      appointmentsdb:
+        condition: service_healthy
+      configserver:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9393/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - hospital-network
+
+  # Gateway Service
+  gatewayserver:
+    container_name: gatewayserver-ms
+    image: hospital/gatewayserver:gatewayserver_image
+    ports:
+      - "8072:8072"
+    depends_on:
+      patient:
+        condition: service_started
+      doctor:
+        condition: service_started
+      appointment:
+        condition: service_started
+    environment:
+      SPRING_APPLICATION_NAME: gatewayserver
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      EUREKA_CLIENT_FETCH_REGISTRY: true
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: true
+    healthcheck:
+      test: "curl --fail --silent http://localhost:8072/actuator/health/readiness | grep UP || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - hospital-network
+
+volumes:
+  patients_data:
+  doctors_data:
+  appointments_data:
+
+networks:
+  hospital-network:
+    driver: bridge

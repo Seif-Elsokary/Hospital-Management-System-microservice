@@ -1,0 +1,17 @@
+package com.microservices.doctor.dto;
+
+import lombok.*;
+
+@Builder
+@Data
+public class DoctorDto {
+    private Long id;
+    private String name;
+    private String email;
+    private String phone;
+    private int age;
+    private int yearOfExperience;
+    private String specialty;
+    private String address;
+    private String gender;
+}
