@@ -1,30 +1,38 @@
+# This is a Docker Compose file.
+# It defines a set of services (containers) that together form a hospital management microservices application.
+# Running `docker-compose up` will start all these services in the correct order.
+
 services:
 
-  # قواعد البيانات
+  # قواعد البيانات (Databases)
+  
+  # Database for the Patient service
   patientsdb:
-    container_name: patientsdb_mysql
-    image: mysql
+    container_name: patientsdb_mysql # The explicit name for this container
+    image: mysql # Use the official MySQL image from Docker Hub
     ports:
-      - "3307:3306"
+      - "3307:3306" # Map the container's MySQL port (3306) to port 3307 on the host machine
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: patientsdb
+      MYSQL_ROOT_PASSWORD: root # Set the password for the root user
+      MYSQL_DATABASE: patientsdb # Create a database named 'patientsdb' on startup
     volumes:
-      - patients_data:/var/lib/mysql
+      - patients_data:/var/lib/mysql # Persist database data to a named volume to prevent data loss
     healthcheck:
+      # Command to check if the MySQL database is ready to accept connections
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot" ]
-      timeout: 10s
-      retries: 10
-      interval: 10s
-      start_period: 30s
+      timeout: 10s # Timeout for the healthcheck command
+      retries: 10 # Number of times to retry before marking as unhealthy
+      interval: 10s # Time between health checks
+      start_period: 30s # Time to wait before starting health checks after container start
     networks:
-      - hospital-network
+      - hospital-network # Connect this container to the custom network
 
+  # Database for the Doctor service (Same structure as patientsdb)
   doctorsdb:
     container_name: doctorsdb_mysql
     image: mysql
     ports:
-      - "3308:3306"
+      - "3308:3306" # Uses a different host port (3308) to avoid conflict
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: doctorsdb
@@ -39,11 +47,12 @@ services:
     networks:
       - hospital-network
 
+  # Database for the Appointment service (Same structure as patientsdb)
   appointmentsdb:
     container_name: appointmentsdb_mysql
     image: mysql
     ports:
-      - "3309:3306"
+      - "3309:3306" # Uses a different host port (3309)
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: appointmentsdb
@@ -59,12 +68,14 @@ services:
       - hospital-network
 
   # Config Server
+  # This service centralizes configuration management for all other microservices.
   configserver:
     container_name: configserver-ms
-    image: hospital/configserver:configserver_image
+    image: hospital/configserver:configserver_image # Uses a custom-built image for the config server
     ports:
-      - "8071:8071"
+      - "8071:8071" # Exposes the config server's port
     healthcheck:
+      # Uses curl to check the service's health endpoint. Looks for "UP" status.
       test: "curl --fail --silent http://localhost:8071/actuator/health/readiness | grep UP || exit 1"
       interval: 10s
       timeout: 5s
@@ -73,20 +84,27 @@ services:
     networks:
       - hospital-network
 
-  # Eureka Server
+  # Eureka Server (Service Discovery)
+  # This service acts as a phonebook where all microservices register themselves.
+  # Other services (like the Gateway) ask Eureka how to find them.
   eurekaserver:
     container_name: eurekaserver-ms
-    image: hospital/eurekaserver:eurekaserver_image
+    image: hospital/eurekaserver:eurekaserver_image # Custom image for Eureka
     ports:
-      - "8761:8761"
+      - "8761:8761" # Standard Eureka dashboard port
     environment:
       SPRING_APPLICATION_NAME: eurekaserver
       SPRING_PROFILES_ACTIVE: default
+      # Tells this service to get its configuration from the Config Server
       SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      # Sets the URL where this Eureka server is running. Since it's not registering with itself, this points to its own container.
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      # Tells this Eureka server not to try to fetch a registry from another Eureka server (it is the server).
       EUREKA_CLIENT_FETCH_REGISTRY: false
+      # Tells this Eureka server not to register itself with another Eureka server (it is the server).
       EUREKA_CLIENT_REGISTER_WITH_EUREKA: false
     depends_on:
+      # Waits for the configserver to be healthy before starting, as it needs to get its config from it.
       configserver:
         condition: service_healthy
     healthcheck:
@@ -98,40 +116,51 @@ services:
     networks:
       - hospital-network
 
-  # Patient Service
+  # Patient Service (Microservice)
+  # This service contains the business logic for managing patient data.
   patient:
     container_name: patient-ms
-    image: hospital/patient:patients_image
+    image: hospital/patient:patients_image # Custom image for the Patient service
     ports:
-      - "9191:9191"
+      - "9191:9191" # Exposes the service on port 9191
     environment:
       SPRING_APPLICATION_NAME: patient
       SPRING_PROFILES_ACTIVE: default
+      # Gets its configuration (like database URL) from the Config Server
       SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      # Connection URL for its dedicated database. Uses the container name 'patientsdb' as the host.
       SPRING_DATASOURCE_URL: jdbc:mysql://patientsdb:3306/patientsdb
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: root
       SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
+      # Tells this service where to find the Eureka server to register itself.
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
+      # This service should ask Eureka for the locations of other services.
       EUREKA_CLIENT_FETCH_REGISTRY: true
+      # This service should register itself with Eureka so others can find it.
       EUREKA_CLIENT_REGISTER_WITH_EUREKA: true
     depends_on:
+      # Waits for its database to be ready before starting.
       patientsdb:
         condition: service_healthy
+      # Waits for the config server to be ready to get its configuration.
       configserver:
         condition: service_healthy
+      # Waits for the Eureka server to be ready so it can register itself.
       eurekaserver:
         condition: service_healthy
     healthcheck:
+      # Checks the service's own health endpoint to see if it's ready.
       test: ["CMD", "curl", "-f", "http://localhost:9191/actuator/health/readiness"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 40s
+      start_period: 40s # Gives the service extra time to start up after its dependencies are ready.
     networks:
       - hospital-network
 
-  # Doctor Service
+  # Doctor Service (Microservice)
+  # This service contains the business logic for managing doctor data. Structure is identical to Patient service.
   doctor:
     container_name: doctor-ms
     image: hospital/doctor:doctors_image
@@ -141,7 +170,7 @@ services:
       SPRING_APPLICATION_NAME: doctor
       SPRING_PROFILES_ACTIVE: default
       SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
-      SPRING_DATASOURCE_URL: jdbc:mysql://doctorsdb:3306/doctorsdb
+      SPRING_DATASOURCE_URL: jdbc:mysql://doctorsdb:3306/doctorsdb # Connects to its own DB
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: root
       SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
@@ -164,7 +193,8 @@ services:
     networks:
       - hospital-network
 
-  # Appointment Service
+  # Appointment Service (Microservice)
+  # This service contains the business logic for managing appointments. Structure is identical to Patient service.
   appointment:
     container_name: appointment-ms
     image: hospital/appointment:appointments_image
@@ -174,7 +204,7 @@ services:
       SPRING_APPLICATION_NAME: appointment
       SPRING_PROFILES_ACTIVE: default
       SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
-      SPRING_DATASOURCE_URL: jdbc:mysql://appointmentsdb:3306/appointmentsdb
+      SPRING_DATASOURCE_URL: jdbc:mysql://appointmentsdb:3306/appointmentsdb # Connects to its own DB
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: root
       SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
@@ -197,13 +227,17 @@ services:
     networks:
       - hospital-network
 
-  # Gateway Service
+  # Gateway Server (API Gateway)
+  # This service is the single entry point for all external client requests (e.g., from a web browser).
+  # It routes requests to the correct microservice (Patient, Doctor, or Appointment).
   gatewayserver:
     container_name: gatewayserver-ms
     image: hospital/gatewayserver:gatewayserver_image
     ports:
-      - "8072:8072"
+      - "8072:8072" # This is the main port that users or front-end applications will call.
     depends_on:
+      # It depends on the core services being at least started.
+      # (Note: 'service_started' means the container is running, not necessarily healthy. 'service_healthy' would be better).
       patient:
         condition: service_started
       doctor:
@@ -214,9 +248,10 @@ services:
       SPRING_APPLICATION_NAME: gatewayserver
       SPRING_PROFILES_ACTIVE: default
       SPRING_CONFIG_IMPORT: "optional:configserver:http://configserver:8071/"
+      # Tells the Gateway where to find the Eureka server to discover the locations of other services.
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://eurekaserver:8761/eureka/"
-      EUREKA_CLIENT_FETCH_REGISTRY: true
-      EUREKA_CLIENT_REGISTER_WITH_EUREKA: true
+      EUREKA_CLIENT_FETCH_REGISTRY: true # It needs to fetch the registry to know where to route requests.
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: true # It can also register itself, though it's less critical.
     healthcheck:
       test: "curl --fail --silent http://localhost:8072/actuator/health/readiness | grep UP || exit 1"
       interval: 10s
@@ -226,11 +261,15 @@ services:
     networks:
       - hospital-network
 
+# Defines the persistent storage volumes for the databases.
+# These ensure that data is not lost when the database containers are stopped or deleted.
 volumes:
-  patients_data:
-  doctors_data:
-  appointments_data:
+  patients_data: # Volume for the patientsdb database
+  doctors_data:   # Volume for the doctorsdb database
+  appointments_data: # Volume for the appointmentsdb database
 
+# Defines a custom network named 'hospital-network'.
+# All services are connected to this network, allowing them to communicate with each other using their container names as hostnames (e.g., 'patientsdb', 'eurekaserver').
 networks:
   hospital-network:
-    driver: bridge
+    driver: bridge # The type of network to create
